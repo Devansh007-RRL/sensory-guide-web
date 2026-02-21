@@ -28,7 +28,17 @@ const NavigationPage = () => {
     };
   }, []);
 
-  const startListening = () => {
+  const toggleListening = () => {
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+      }
+      setIsListening(false);
+      speak("Microphone turned off.");
+      return;
+    }
+
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       speak("Voice recognition is not supported in this browser.");
@@ -42,9 +52,13 @@ const NavigationPage = () => {
       setDestination(transcript);
       speak(`You said ${transcript}. Getting directions now.`);
       setIsListening(false);
+      recognitionRef.current = null;
       getDirections(transcript);
     };
-    recognition.onend = () => setIsListening(false);
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
     recognition.start();
     recognitionRef.current = recognition;
     setIsListening(true);
@@ -143,7 +157,7 @@ const NavigationPage = () => {
             />
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={startListening}
+              onClick={toggleListening}
               className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${
                 isListening ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground glow-button"
               }`}
