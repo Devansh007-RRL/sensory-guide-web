@@ -9,7 +9,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { image, nightMode } = await req.json();
+    const { image, nightMode, previousDescription } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -21,7 +21,9 @@ serve(async (req) => {
 4. **Environment**: Indoor/outdoor, lighting conditions${nightMode ? ", note this is night mode with enhanced brightness" : ""}
 5. **Safety**: Any potential hazards
 
-Keep descriptions under 3 sentences. Be direct and practical. Example: "Two people ahead about 3 meters away. A chair on your left about 1 meter. Clear path to the right."`;
+Keep descriptions under 3 sentences. Be direct and practical. Example: "Two people ahead about 3 meters away. A chair on your left about 1 meter. Clear path to the right."
+
+IMPORTANT: You will be given the previous description of the scene. If the scene has NOT meaningfully changed (same objects, same positions, same environment), respond with EXACTLY "NO_CHANGE" and nothing else. Only provide a new description if there is a meaningful difference (objects moved, new objects appeared, people moved significantly, lighting changed, etc.). Minor AI interpretation differences do NOT count as changes.${previousDescription ? `\n\nPrevious description: "${previousDescription}"` : ""}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
