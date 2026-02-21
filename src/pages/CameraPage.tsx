@@ -83,13 +83,13 @@ const CameraPage = () => {
             "Content-Type": "application/json",
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ image: frame, nightMode }),
+          body: JSON.stringify({ image: frame, nightMode, previousDescription: lastDescription }),
         }
       );
 
       if (!response.ok) throw new Error("Analysis failed");
       const data = await response.json();
-      if (data.description && data.description !== lastDescription) {
+      if (data.description && data.description !== "NO_CHANGE") {
         setLastDescription(data.description);
         speak(data.description);
       }
