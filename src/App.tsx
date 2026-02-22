@@ -9,8 +9,28 @@ import CameraPage from "./pages/CameraPage";
 import NavigationPage from "./pages/NavigationPage";
 import ChatbotPage from "./pages/ChatbotPage";
 import NotFound from "./pages/NotFound";
+import VoiceActivationIndicator from "./components/VoiceActivationIndicator";
+import { useVoiceActivation } from "./hooks/useVoiceActivation";
 
 const queryClient = new QueryClient();
+
+const AppContent = () => {
+  const { isActive, isWakeListening } = useVoiceActivation();
+
+  return (
+    <>
+      <Routes>
+        <Route path="/" element={<Index />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/camera" element={<CameraPage />} />
+        <Route path="/navigation" element={<NavigationPage />} />
+        <Route path="/chatbot" element={<ChatbotPage />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+      <VoiceActivationIndicator isActive={isActive} isWakeListening={isWakeListening} />
+    </>
+  );
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -18,14 +38,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/camera" element={<CameraPage />} />
-          <Route path="/navigation" element={<NavigationPage />} />
-          <Route path="/chatbot" element={<ChatbotPage />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <AppContent />
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
