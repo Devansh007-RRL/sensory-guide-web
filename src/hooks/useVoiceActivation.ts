@@ -3,6 +3,9 @@ import { useNavigate, useLocation } from "react-router-dom";
 
 const WAKE_WORD = "hey glasses";
 
+// Pages that have their own voice/mic controls — don't compete
+const VOICE_CONFLICT_PAGES = ["/camera", "/navigation"];
+
 export const useVoiceActivation = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -11,6 +14,7 @@ export const useVoiceActivation = () => {
   const wakeRecognitionRef = useRef<any>(null);
   const commandRecognitionRef = useRef<any>(null);
   const restartTimeoutRef = useRef<any>(null);
+  const isConflictPage = VOICE_CONFLICT_PAGES.includes(location.pathname);
 
   const speak = useCallback((text: string) => {
     const utterance = new SpeechSynthesisUtterance(text);
@@ -127,7 +131,17 @@ export const useVoiceActivation = () => {
     setIsWakeListening(true);
   }, [startCommandListening, isWakeListening]);
 
+  // Stop/start wake listening based on current page
   useEffect(() => {
+    if (isConflictPage) {
+      // Stop all voice recognition on pages with their own mic controls
+      if (wakeRecognitionRef.current) try { wakeRecognitionRef.current.stop(); } catch {}
+      if (commandRecognitionRef.current) try { commandRecognitionRef.current.stop(); } catch {}
+      if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+      setIsWakeListening(false);
+      return;
+    }
+
     startWakeWordListening();
 
     return () => {
@@ -136,16 +150,16 @@ export const useVoiceActivation = () => {
       if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
       speechSynthesis.cancel();
     };
-  }, []);
+  }, [isConflictPage]);
 
-  // Restart wake listening when command finishes
+  // Restart wake listening when command finishes (only on non-conflict pages)
   useEffect(() => {
-    if (!isActive && !wakeRecognitionRef.current) {
+    if (!isActive && !wakeRecognitionRef.current && !isConflictPage) {
       restartTimeoutRef.current = setTimeout(() => {
         startWakeWordListening();
       }, 1000);
     }
-  }, [isActive, startWakeWordListening]);
+  }, [isActive, startWakeWordListening, isConflictPage]);
 
   return { isActive, isWakeListening };
 };

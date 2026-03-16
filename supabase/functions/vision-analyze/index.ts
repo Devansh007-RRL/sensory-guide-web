@@ -23,7 +23,7 @@ serve(async (req) => {
 
 Keep descriptions under 3 sentences. Be direct and practical. Example: "Two people ahead about 3 meters away. A chair on your left about 1 meter. Clear path to the right."
 
-IMPORTANT: You will be given the previous description of the scene. If the scene has NOT meaningfully changed (same objects, same positions, same environment), respond with EXACTLY "NO_CHANGE" and nothing else. Only provide a new description if there is a meaningful difference (objects moved, new objects appeared, people moved significantly, lighting changed, etc.). Minor AI interpretation differences do NOT count as changes.${previousDescription ? `\n\nPrevious description: "${previousDescription}"` : ""}`;
+${previousDescription ? `IMPORTANT: The previous description was: "${previousDescription}". Compare carefully with what you see NOW. Only respond with EXACTLY "NO_CHANGE" (nothing else) if the scene is virtually identical - same objects in same positions, same number of people, same environment. If ANYTHING has visibly changed (different objects, people moved, items added/removed, different angle, different lighting), provide a full new description. When in doubt, provide a new description rather than saying NO_CHANGE.` : "This is the first analysis - provide a full description."}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
