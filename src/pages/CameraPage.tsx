@@ -2,18 +2,22 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Camera as CameraIcon, Moon, Mic, Power, PowerOff } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 
 const CameraPage = () => {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  
+  // UI States
   const [isDetecting, setIsDetecting] = useState(false);
   const [nightMode, setNightMode] = useState(false);
   const [voiceControl, setVoiceControl] = useState(false);
   const [lastDescription, setLastDescription] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  // Logic Refs (crucial for setInterval closures)
+  const isAnalyzingRef = useRef(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<any>(null);
 
@@ -39,6 +43,7 @@ const CameraPage = () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (recognitionRef.current) recognitionRef.current.stop();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const speak = useCallback((text: string) => {
@@ -65,48 +70,6 @@ const CameraPage = () => {
     return canvas.toDataURL("image/jpeg", 0.6);
   }, [nightMode]);
 
-  const analyzeFrame = useCallback(async () => {
-    if (isAnalyzing) return;
-    setIsAnalyzing(true);
-    const frame = captureFrame();
-    if (!frame) {
-      setIsAnalyzing(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/vision-analyze`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-          },
-          body: JSON.stringify({ image: frame, nightMode, previousDescription: lastDescription }),
-        }
-      );
-
-      if (!response.ok) throw new Error("Analysis failed");
-      const data = await response.json();
-      if (data.description && data.description !== "NO_CHANGE") {
-        setLastDescription(data.description);
-        speak(data.description);
-      }
-    } catch (err) {
-      console.error("Analysis error:", err);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [captureFrame, nightMode, lastDescription, speak, isAnalyzing]);
-
-  const startDetection = useCallback(() => {
-    setIsDetecting(true);
-    speak("Object detection started.");
-    analyzeFrame();
-    intervalRef.current = setInterval(analyzeFrame, 5000);
-  }, [analyzeFrame, speak]);
-
   const stopDetection = useCallback(() => {
     setIsDetecting(false);
     if (intervalRef.current) {
@@ -115,6 +78,107 @@ const CameraPage = () => {
     }
     speak("Object detection stopped.");
   }, [speak]);
+
+  const analyzeFrame = useCallback(async () => {
+    if (isAnalyzingRef.current) return;
+    
+    isAnalyzingRef.current = true;
+    setIsAnalyzing(true);
+    
+    const frame = captureFrame();
+    if (!frame) {
+      isAnalyzingRef.current = false;
+      setIsAnalyzing(false);
+      return;
+    }
+
+    try {
+      // 1. Get the API key from your Vite environment variables
+      const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!GEMINI_API_KEY) throw new Error("VITE_GEMINI_API_KEY not configured in .env");
+
+      // 2. Extract the base64 data by stripping the "data:image/jpeg;base64," prefix
+      const base64Data = frame.split(",")[1];
+
+      // 3. Construct the system prompt
+      const systemPrompt = `You are an AI assistant helping a visually impaired person understand their surroundings through a camera feed. Analyze the image and provide a concise, clear description focused on:
+
+1. **Obstacles**: Objects that could block the path (furniture, walls, poles, steps, etc.) with approximate distance
+2. **People/Crowds**: Number of people visible, whether it's crowded
+3. **Currency**: If any banknotes or coins are visible, identify them (Indian Rupees)
+4. **Environment**: Indoor/outdoor, lighting conditions${nightMode ? ", note this is night mode with enhanced brightness" : ""}
+5. **Safety**: Any potential hazards
+
+Keep descriptions under 3 sentences. Be direct and practical. Example: "Two people ahead about 3 meters away. A chair on your left about 1 meter. Clear path to the right."
+
+${lastDescription ? `IMPORTANT: The previous description was: "${lastDescription}". Compare carefully with what you see NOW. Only respond with EXACTLY "NO_CHANGE" (nothing else) if the scene is virtually identical - same objects in same positions, same number of people, same environment. If ANYTHING has visibly changed (different objects, people moved, items added/removed, different angle, different lighting), provide a full new description. When in doubt, provide a new description rather than saying NO_CHANGE.` : "This is the first analysis - provide a full description."}`;
+
+      // 4. Call Google directly
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+      
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }]
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: "Describe what you see in this camera frame for a visually impaired person." },
+                {
+                  inlineData: {
+                    mimeType: "image/jpeg",
+                    data: base64Data
+                  }
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 150,
+          }
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          console.error("Rate limit hit! Stopping detection to prevent freeze.");
+          stopDetection();
+          speak("API rate limit reached. Please wait a moment before trying again.");
+          return;
+        }
+        throw new Error(`Analysis failed with status ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // 5. Parse native Gemini response
+      const description = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+      if (description && description !== "NO_CHANGE") {
+        setLastDescription(description);
+        speak(description);
+      }
+    } catch (err) {
+      console.error("Analysis error:", err);
+    } finally {
+      isAnalyzingRef.current = false;
+      setIsAnalyzing(false);
+    }
+  }, [captureFrame, nightMode, lastDescription, speak, stopDetection]);
+
+  const startDetection = useCallback(() => {
+    if (intervalRef.current) return; 
+
+    setIsDetecting(true);
+    speak("Object detection started.");
+    analyzeFrame();
+    intervalRef.current = setInterval(analyzeFrame, 5000); 
+  }, [analyzeFrame, speak]);
 
   // Voice control
   useEffect(() => {
@@ -132,6 +196,7 @@ const CameraPage = () => {
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = "en-IN";
+    
     recognition.onresult = (event: any) => {
       const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase().trim();
       if (transcript.includes("night mode on") || transcript.includes("enable night mode")) {
