@@ -3,6 +3,9 @@ import { useNavigate, useLocation } from "react-router-dom";
 
 const WAKE_WORD = "hey glasses";
 
+// Pages that have their own voice/mic controls — don't compete
+const VOICE_CONFLICT_PAGES = ["/camera", "/navigation"];
+
 export const useVoiceActivation = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -11,6 +14,7 @@ export const useVoiceActivation = () => {
   const wakeRecognitionRef = useRef<any>(null);
   const commandRecognitionRef = useRef<any>(null);
   const restartTimeoutRef = useRef<any>(null);
+  const isConflictPage = VOICE_CONFLICT_PAGES.includes(location.pathname);
 
   const speak = useCallback((text: string) => {
     const utterance = new SpeechSynthesisUtterance(text);
