@@ -16,7 +16,7 @@ const CameraPage = () => {
   const [lastDescription, setLastDescription] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   
-  // Logic Refs (crucial for setInterval closures)
+  // Logic Refs
   const isAnalyzingRef = useRef(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -26,7 +26,7 @@ const CameraPage = () => {
     const startCamera = async () => {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: 640, height: 480 },
+          video: { facingMode: "environment", width: 640, height: 480 },
         });
         setStream(mediaStream);
         if (videoRef.current) {
@@ -80,7 +80,8 @@ const CameraPage = () => {
   }, [speak]);
 
   const analyzeFrame = useCallback(async () => {
-    if (isAnalyzingRef.current) return;
+    // Wait until current speech is finished before taking a new photo
+    if (isAnalyzingRef.current || window.speechSynthesis.speaking) return;
     
     isAnalyzingRef.current = true;
     setIsAnalyzing(true);
@@ -93,27 +94,29 @@ const CameraPage = () => {
     }
 
     try {
-      // 1. Get the API key from your Vite environment variables
-      const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!GEMINI_API_KEY) throw new Error("VITE_GEMINI_API_KEY not configured in .env");
+      // Gracefully handle either the singular or plural .env naming convention!
+      const rawKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEYS;
+      if (!rawKey) throw new Error("API Key not configured in .env");
+      
+      const GEMINI_API_KEY = rawKey.split(',')[0].trim();
 
-      // 2. Extract the base64 data by stripping the "data:image/jpeg;base64," prefix
+      // Extract base64
       const base64Data = frame.split(",")[1];
 
-      // 3. Construct the system prompt
+      // System Prompt
       const systemPrompt = `You are an AI assistant helping a visually impaired person understand their surroundings through a camera feed. Analyze the image and provide a concise, clear description focused on:
 
-1. **Obstacles**: Objects that could block the path (furniture, walls, poles, steps, etc.) with approximate distance
-2. **People/Crowds**: Number of people visible, whether it's crowded
-3. **Currency**: If any banknotes or coins are visible, identify them (Indian Rupees)
-4. **Environment**: Indoor/outdoor, lighting conditions${nightMode ? ", note this is night mode with enhanced brightness" : ""}
-5. **Safety**: Any potential hazards
+1. **Obstacles**: Objects that could block the path (furniture, walls, poles, steps, people's hands/bodies, etc.) with approximate distance.
+2. **People/Crowds**: Number of people visible, whether it's crowded.
+3. **Currency**: If any banknotes or coins are visible, identify them (Indian Rupees).
+4. **Environment**: Indoor/outdoor, lighting conditions${nightMode ? ", note this is night mode with enhanced brightness" : ""}.
+5. **Safety**: Any potential hazards.
 
-Keep descriptions under 3 sentences. Be direct and practical. Example: "Two people ahead about 3 meters away. A chair on your left about 1 meter. Clear path to the right."
+Write 2 to 3 distinct sentences covering these points. Be direct and practical. Example: "A hand is right in front of the camera. Two people are ahead about 3 meters away. Clear path to the right."
 
-${lastDescription ? `IMPORTANT: The previous description was: "${lastDescription}". Compare carefully with what you see NOW. Only respond with EXACTLY "NO_CHANGE" (nothing else) if the scene is virtually identical - same objects in same positions, same number of people, same environment. If ANYTHING has visibly changed (different objects, people moved, items added/removed, different angle, different lighting), provide a full new description. When in doubt, provide a new description rather than saying NO_CHANGE.` : "This is the first analysis - provide a full description."}`;
+${lastDescription ? `IMPORTANT: The previous description was: "${lastDescription}". Compare carefully with what you see NOW. Only respond with EXACTLY "NO_CHANGE" if the scene is 100% identical. If ANYTHING has visibly changed (e.g., a hand appears, objects moved, items added/removed, different angle), YOU MUST provide a full new description. When in doubt, provide a new description rather than saying NO_CHANGE.` : "This is the first analysis - provide a full description."}`;
 
-      // 4. Call Google directly
+      // Call Gemini FLASH with 8-second safe limit
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
       
       const response = await fetch(url, {
@@ -137,9 +140,16 @@ ${lastDescription ? `IMPORTANT: The previous description was: "${lastDescription
               ]
             }
           ],
+          // Turn off safety filters to prevent cutting off descriptions
+          safetySettings: [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+          ],
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 150,
+            temperature: 0.4, 
+            maxOutputTokens: 500, // Enough room for full sentences
           }
         }),
       });
@@ -155,11 +165,10 @@ ${lastDescription ? `IMPORTANT: The previous description was: "${lastDescription
       }
       
       const data = await response.json();
-      
-      // 5. Parse native Gemini response
       const description = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
-      if (description && description !== "NO_CHANGE") {
+      // Robust NO_CHANGE check
+      if (description && !description.includes("NO_CHANGE")) {
         setLastDescription(description);
         speak(description);
       }
@@ -177,7 +186,9 @@ ${lastDescription ? `IMPORTANT: The previous description was: "${lastDescription
     setIsDetecting(true);
     speak("Object detection started.");
     analyzeFrame();
-    intervalRef.current = setInterval(analyzeFrame, 5000); 
+    
+    // 8 Seconds interval for safe Flash free tier usage (7.5 requests per min)
+    intervalRef.current = setInterval(analyzeFrame, 8000); 
   }, [analyzeFrame, speak]);
 
   // Voice control
